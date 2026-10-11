@@ -1,0 +1,27 @@
+# MATLAB autosave and temporary files
+*.asv
+*.m~
+*.autosave
+
+# MATLAB runtime workspace data and figures
+*.mat
+*.fig
+
+# MATLAB / Simulink compilation and cache
+*.slxc
+slprj/
+*.mex*
+
+# Octave
+octave-workspace
+octave-core
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor artifacts
+*.swp
+*.swo
+*~
