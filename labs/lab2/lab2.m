@@ -1,9 +1,4 @@
-%% Лабораторная работа 2: Представление сигналов в модели
-% Тема: Моделирование фильтрации гармонического сигнала в условиях шума,
-%       перенос сигнала на несущую частоту и демодуляция.
-% Вариант параметров: частота f = 5, мощность шума N = -10 дБВт, окно усреднения Len = 3.
-
-%% Часть 1. Гармонический сигнал (1 период)
+%% Часть Гармонический сигнал (1 период)
 clear all;
 close all;
 SS = 0.1;
@@ -133,7 +128,7 @@ grid on;
 NoCarry = noised_carried .* carry;
 
 figure('Name', 'Части 12-13: Демодуляция и фильтрация Баттерворта');
-subplot(2, 1, 1);
+subplot(2, 2, 1);
 plot(samples, NoCarry);
 xlabel('Время t, с');
 ylabel('Амплитуда');
@@ -143,11 +138,21 @@ grid on;
 [b_butter, a_butter] = butter(4, 0.008, 'low');
 FillNoCar = 2 * filtfilt(b_butter, a_butter, NoCarry);
 
-subplot(2, 1, 2);
+subplot(2, 2, 2);
 plot(samples, FillNoCar);
 xlabel('Время t, с');
 ylabel('Амплитуда');
 title('Восстановленный сигнал после ФНЧ Баттерворта');
 grid on;
+
+
+subplot(2,2,3);
+spectrum5 = abs(fft(FillNoCar));
+plot(freqs,spectrum5);
+xlabel('Частота \omega, рад/с');
+ylabel('Амплитуда');
+title('Спектр после фильтра Баттерворта');
+grid on;
+
 
 exportgraphics(gcf, 'graphic_lab2.jpg');
