@@ -1,0 +1,95 @@
+function [rx_qpsk, C, C_eq] = ofdm_demod(rx_signal, params)
+    rx_no_cp = rx_signal(params.N_cp + 1 : params.N_cp + params.N_fft);
+    rx_spec = fft(rx_no_cp);
+    C = rx_spec(params.Nz + 1 : end - params.Nz);
+    rs_rx = C(params.rs_idx);
+    H = rs_rx ./ params.rs_syms;
+    H_eq = interp1(params.rs_idx, H, 1:length(C), 'linear', 'extrap');
+    C_eq = C ./ H_eq;
+    rx_qpsk = C_eq(params.data_idx);
+end
+
+function [tx_signal, params] = ofdm_mod(qpsk_syms, Delta_RS, T_cp, C)
+    if nargin < 2, Delta_RS = 4; end
+    if nargin < 3, T_cp = 1/16; end
+    if nargin < 4, C = 1/4; end
+    N_qpsk = length(qpsk_syms);
+    N_rs = floor(N_qpsk / Delta_RS);
+    rs_syms = repmat(0.707 + 0.707j, 1, N_rs);
+    rs_idx = 1 : Delta_RS : (1 + (N_rs - 1) * Delta_RS);
+    N_active = N_qpsk + N_rs;
+    data_idx = setdiff(1:N_active, rs_idx);
+    active_syms = zeros(1, N_active);
+    active_syms(rs_idx) = rs_syms;
+    active_syms(data_idx) = qpsk_syms;
+    Nz = round(C * N_active);
+    spectrum = [zeros(1, Nz), active_syms, zeros(1, Nz)];
+    N_fft = length(spectrum);
+    time_signal = ifft(spectrum);
+    N_cp = round(T_cp * N_fft);
+    cp = time_signal(end - N_cp + 1 : end);
+    tx_signal = [cp, time_signal];
+    params.Delta_RS = Delta_RS;
+    params.T_cp = T_cp;
+    params.C = C;
+    params.N_qpsk = N_qpsk;
+    params.N_rs = N_rs;
+    params.N_active = N_active;
+    params.Nz = Nz;
+    params.N_fft = N_fft;
+    params.N_cp = N_cp;
+    params.rs_idx = rs_idx;
+    params.data_idx = data_idx;
+    params.rs_syms = rs_syms;
+    params.spectrum_tx = spectrum;
+end
+
+function [symbols, bits] = qpsk_mod(bits)
+    if mod(length(bits), 2) ~= 0, bits = [bits, 0]; end
+    N = length(bits) / 2;
+    symbols = zeros(1, N);
+    for i = 1:N
+        I = (1 - 2*bits(2*i - 1)) * 0.707;
+        Q = (1 - 2*bits(2*i)) * 0.707;
+        symbols(i) = I + 1j * Q;
+    end
+end
+
+function [bits] = qpsk_demod(symbols)
+    N = length(symbols);
+    bits = zeros(1, 2*N);
+    for i = 1:N
+        s = symbols(i);
+        bits(2*i - 1) = double(real(s) < 0);
+        bits(2*i)     = double(imag(s) < 0);
+    end
+end
+
+function [rx_signal] = channel_multipath(tx_signal, Nb, N0_dB)
+    if nargin < 2, Nb = 2; end
+    if nargin < 3, N0_dB = -100; end
+    c = 3e8; Ts = 1 / 11e6; f0 = 2.1e9;
+    L = length(tx_signal);
+    D = sort(10 + (30 - 10) * rand(1, Nb));
+    tau = round((D - D(1)) / (c * Ts));
+    G = c ./ (4 * pi * D * f0);
+    Smpy = zeros(1, L);
+    for i = 1:Nb
+        Si = [zeros(1, tau(i)), tx_signal];
+        Smpy = Smpy + G(i) * Si(1:L);
+    end
+    noise_pwr = 10^(N0_dB / 10);
+    noise = sqrt(noise_pwr / 2) * (randn(1, L) + 1j * randn(1, L));
+    rx_signal = Smpy + noise;
+end
+
+
+tx_bits = randi([0, 1], 1, 40);
+[qpsk, ~] = qpsk_mod(tx_bits);
+[tx, params] = ofdm_mod(qpsk);
+[rx_sig] = channel_multipath(tx, 2, -100);
+rx_qpsk = ofdm_demod(rx_sig, params);
+rx_bits = qpsk_demod(rx_qpsk);
+
+answers = ["NO", "YES"];
+fprintf("Is rx == tx? %s\n", answers(all(rx_bits == tx_bits) + 1));

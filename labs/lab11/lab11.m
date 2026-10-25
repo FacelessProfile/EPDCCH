@@ -1,0 +1,230 @@
+clear all; close all; clc;
+
+msg = 'This is a test message for practice 8 var 8..';
+
+tx_bits = encode_symbol(msg);
+coded_bits = encode_conv(tx_bits);
+[inter_bits, inter_seq] = interleave(coded_bits);
+qpsk_tx = qpsk_mod(inter_bits);
+[ofdm_tx, params] = ofdm_mod(qpsk_tx, 4, 1/16, 1/4);
+[rx_signal, Smpy, ch_info] = channel_multipath(ofdm_tx, 6, -100);
+[rx_qpsk, C, C_eq] = ofdm_demod(rx_signal, params);
+rx_inter_bits = qpsk_demod(rx_qpsk);
+rx_coded = inv_interleave(rx_inter_bits, inter_seq);
+rx_bits = decode_viterbi(rx_coded);
+rx_msg = decode_symbol(rx_bits);
+
+ber = sum(tx_bits ~= rx_bits) / length(tx_bits);
+
+fprintf('--- Полная имитационная модель (Практика 8) ---\n');
+fprintf('Исходный текст:   "%s"\n', msg);
+fprintf('Принятый текст:   "%s"\n', rx_msg);
+fprintf('Всего бит:        %d\n', length(tx_bits));
+fprintf('Ошибок бит:       %d\n', sum(tx_bits ~= rx_bits));
+fprintf('BER:              %f\n', ber);
+answers = ["NO", "YES"];
+fprintf('Is rx == tx?      %s\n\n', answers((strcmp(msg, rx_msg)) + 1));
+
+fig = figure('Name', 'Практика 8: Графики спектров и созвездий', 'Visible', 'off');
+
+subplot(4, 2, [1 2]);
+plot(abs(params.spectrum_tx), 'LineWidth', 1);
+title('Spectrum Tx');
+xlabel('Номер поднесущей'); ylabel('Амплитуда'); grid on;
+
+subplot(4, 2, [3 4]);
+plot(abs(C), 'LineWidth', 1);
+title('Spectrum Rx');
+xlabel('Номер поднесущей'); ylabel('Амплитуда'); grid on;
+
+subplot(4, 2, [5 6]);
+plot(abs(C_eq), 'LineWidth', 1);
+title('EQ Spectrum Rx');
+xlabel('Номер поднесущей'); ylabel('Амплитуда'); grid on;
+
+subplot(4, 2, 7);
+plot(real(qpsk_tx), imag(qpsk_tx), 'b.', 'MarkerSize', 10);
+title('QAM Symbols Tx');
+xlabel('I'); ylabel('Q'); axis([-2 2 -2 2]); grid on;
+
+subplot(4, 2, 8);
+plot(real(rx_qpsk), imag(rx_qpsk), 'r.', 'MarkerSize', 10);
+title('QAM Symbols Rx');
+xlabel('I'); ylabel('Q'); axis([-2 2 -2 2]); grid on;
+
+current_dir = fileparts(mfilename('fullpath'));
+saveas(fig, fullfile(current_dir, 'graphic_lab11.jpg'));
+
+
+function bits = encode_symbol(msg)
+    alphabet = ['a':'z', 'A':'Z', '0':'9', ' ', '.'];
+    weights  = [32, 16, 8, 4, 2, 1];
+    bits = [];
+    for i = 1:length(msg)
+        idx = find(alphabet == msg(i)) - 1;
+        char_bits = mod(floor(idx ./ weights), 2);
+        bits = [bits, char_bits];
+    end
+end
+
+function msg = decode_symbol(bits)
+    alphabet = ['a':'z', 'A':'Z', '0':'9', ' ', '.'];
+    weights  = [32, 16, 8, 4, 2, 1];
+    msg = '';
+    for i = 1:6:length(bits)
+        chunk = bits(i : i+5);
+        idx = sum(chunk .* weights);
+        msg = [msg, alphabet(idx + 1)];
+    end
+end
+
+function encoded = encode_conv(bits)
+    mem = zeros(1, 6);
+    encoded = zeros(1, 2 * length(bits));
+    for i = 1:length(bits)
+        x = bits(i);
+        encoded(2*i-1) = mod(x + mem(1) + mem(2) + mem(3) + mem(6), 2);
+        encoded(2*i)   = mod(x + mem(2) + mem(3) + mem(5) + mem(6), 2);
+        mem = [x, mem(1:5)];
+    end
+end
+
+function decoded = decode_viterbi(rx_bits)
+    weights = [32; 16; 8; 4; 2; 1];
+    states = mod(floor((0:63)' ./ [32 16 8 4 2 1]), 2);
+    num_steps = length(rx_bits) / 2;
+    path_metric = [0; inf(63, 1)];
+    history = cell(64, 1);
+    for t = 1:num_steps
+        rx_pair = rx_bits(2*t-1 : 2*t);
+        new_metric = inf(64, 1);
+        new_history = cell(64, 1);
+        for s = 1:64
+            if isinf(path_metric(s)), continue; end
+            m = states(s, :);
+            for b = [0, 1]
+                y1 = mod(b + m(1) + m(2) + m(3) + m(6), 2);
+                y2 = mod(b + m(2) + m(3) + m(5) + m(6), 2);
+                penalty = (y1 ~= rx_pair(1)) + (y2 ~= rx_pair(2));
+                cost = path_metric(s) + penalty;
+                next_mem = [b, m(1:5)];
+                next_s = next_mem * weights + 1;
+                if cost < new_metric(next_s)
+                    new_metric(next_s) = cost;
+                    new_history{next_s} = [history{s}, b];
+                end
+            end
+        end
+        path_metric = new_metric;
+        history = new_history;
+    end
+    [~, best_state] = min(path_metric);
+    decoded = history{best_state};
+end
+
+function [interleaved, seq] = interleave(bits)
+    N = length(bits);
+    seq = randperm(N);
+    interleaved = zeros(1, N);
+    for i = 1:N
+        interleaved(seq(i)) = bits(i);
+    end
+end
+
+function initial = inv_interleave(interleaved, seq)
+    N = length(interleaved);
+    initial = zeros(1, N);
+    for i = 1:N
+        initial(i) = interleaved(seq(i));
+    end
+end
+
+function [symbols, bits] = qpsk_mod(bits)
+    if mod(length(bits), 2) ~= 0, bits = [bits, 0]; end
+    N = length(bits) / 2;
+    symbols = zeros(1, N);
+    for i = 1:N
+        I = (1 - 2*bits(2*i - 1)) * 0.707;
+        Q = (1 - 2*bits(2*i))     * 0.707;
+        symbols(i) = I + 1j * Q;
+    end
+end
+
+function bits = qpsk_demod(symbols)
+    N = length(symbols);
+    bits = zeros(1, 2*N);
+    for i = 1:N
+        s = symbols(i);
+        bits(2*i - 1) = double(real(s) < 0);
+        bits(2*i)     = double(imag(s) < 0);
+    end
+end
+
+function [tx_signal, params] = ofdm_mod(qpsk_syms, Delta_RS, T_cp, C)
+    if nargin < 2, Delta_RS = 4; end
+    if nargin < 3, T_cp = 1/16; end
+    if nargin < 4, C = 1/4; end
+    N_qpsk = length(qpsk_syms);
+    N_rs = floor(N_qpsk / Delta_RS);
+    rs_syms = repmat(0.707 + 0.707j, 1, N_rs);
+    rs_idx = 1 : Delta_RS : (1 + (N_rs - 1) * Delta_RS);
+    N_active = N_qpsk + N_rs;
+    data_idx = setdiff(1:N_active, rs_idx);
+    active_syms = zeros(1, N_active);
+    active_syms(rs_idx) = rs_syms;
+    active_syms(data_idx) = qpsk_syms;
+    Nz = round(C * N_active);
+    spectrum = [zeros(1, Nz), active_syms, zeros(1, Nz)];
+    N_fft = length(spectrum);
+    time_signal = ifft(spectrum);
+    N_cp = round(T_cp * N_fft);
+    cp = time_signal(end - N_cp + 1 : end);
+    tx_signal = [cp, time_signal];
+    params.Delta_RS = Delta_RS;
+    params.T_cp = T_cp;
+    params.C = C;
+    params.N_qpsk = N_qpsk;
+    params.N_rs = N_rs;
+    params.N_active = N_active;
+    params.Nz = Nz;
+    params.N_fft = N_fft;
+    params.N_cp = N_cp;
+    params.rs_idx = rs_idx;
+    params.data_idx = data_idx;
+    params.rs_syms = rs_syms;
+    params.spectrum_tx = spectrum;
+end
+
+function [rx_qpsk, C, C_eq] = ofdm_demod(rx_signal, params)
+    rx_no_cp = rx_signal(params.N_cp + 1 : params.N_cp + params.N_fft);
+    rx_spec = fft(rx_no_cp);
+    C = rx_spec(params.Nz + 1 : end - params.Nz);
+    rs_rx = C(params.rs_idx);
+    H = rs_rx ./ params.rs_syms;
+    H_eq = interp1(params.rs_idx, H, 1:length(C), 'linear', 'extrap');
+    C_eq = C ./ H_eq;
+    rx_qpsk = C_eq(params.data_idx);
+end
+
+function [rx_signal, Smpy, ch_info] = channel_multipath(tx_signal, Nb, N0_dB, f0, B)
+    if nargin < 2, Nb = 6; end
+    if nargin < 3, N0_dB = -100; end
+    if nargin < 4, f0 = 2.1e9; end
+    if nargin < 5, B = 11e6; end
+    c = 3e8; Ts = 1 / B;
+    L = length(tx_signal);
+    D = sort(10 + (25 - 10) * rand(1, Nb));
+    tau = round((D - D(1)) / (c * Ts));
+    G = c ./ (4 * pi * D * f0);
+    Smpy = zeros(1, L);
+    for i = 1:Nb
+        Si = [zeros(1, tau(i)), tx_signal];
+        Smpy = Smpy + G(i) * Si(1:L);
+    end
+    noise_pwr = 10^(N0_dB / 10);
+    noise = sqrt(noise_pwr / 2) * (randn(1, L) + 1j * randn(1, L));
+    rx_signal = Smpy + noise;
+    ch_info.D = D;
+    ch_info.tau = tau;
+    ch_info.G = G;
+end
